@@ -1,13 +1,11 @@
 import { NativeModules, NativeEventEmitter, Platform } from "react-native";
 
-import * as EPToolkit from "./utils/EPToolkit";
+import { exchange_text } from "./utils/EPToolkit";
 import { processColumnText } from "./utils/print-column";
 import { COMMANDS } from "./utils/printer-commands";
 import { connectToHost } from "./utils/net-connect";
 
-const RNUSBPrinter = NativeModules.RNUSBPrinter;
-const RNBLEPrinter = NativeModules.RNBLEPrinter;
-const RNNetPrinter = NativeModules.RNNetPrinter;
+const { RNUSBPrinter, RNBLEPrinter, RNNetPrinter } = NativeModules;
 
 export interface PrinterOptions {
   beep?: boolean;
@@ -56,61 +54,38 @@ export enum ColumnAlignment {
 }
 
 const textTo64Buffer = (text: string, opts: PrinterOptions) => {
-  const defaultOptions = {
+  const options = {
     beep: false,
     cut: false,
     tailingLine: false,
-    encoding: "UTF8",
-  };
-
-  const options = {
-    ...defaultOptions,
     ...opts,
   };
 
   const fixAndroid = "\n";
-  const buffer = EPToolkit.exchange_text(text + fixAndroid, options);
-  return buffer.toString("base64");
+  return exchange_text(text + fixAndroid, options).then((t) =>
+    t.toString("base64")
+  );
 };
 
 const billTo64Buffer = (text: string, opts: PrinterOptions) => {
-  const defaultOptions = {
+  const options = {
     beep: true,
     cut: true,
-    encoding: "UTF8",
     tailingLine: true,
-  };
-  const options = {
-    ...defaultOptions,
     ...opts,
   };
-  const buffer = EPToolkit.exchange_text(text, options);
-  return buffer.toString("base64");
+  return exchange_text(text, options).then((t) => t.toString("base64"));
 };
 
-const textPreprocessingIOS = (text: string, canCut = true, beep = true) => {
-  let options = {
-    beep: beep,
-    cut: canCut,
-  };
-  return {
-    text: text
-      .replace(/<\/?CB>/g, "")
-      .replace(/<\/?CM>/g, "")
-      .replace(/<\/?CD>/g, "")
-      .replace(/<\/?C>/g, "")
-      .replace(/<\/?D>/g, "")
-      .replace(/<\/?B>/g, "")
-      .replace(/<\/?M>/g, ""),
-    opts: options,
-  };
-};
+const textPreprocessingIOS = (text: string, cut = true, beep = true) => ({
+  text: text.replace(/<\/?(CB|CM|CD|C|D|B|M)>/g, ""),
+  opts: { beep, cut },
+});
 
 // const imageToBuffer = async (imagePath: string, threshold: number = 60) => {
 //   const buffer = await EPToolkit.exchange_image(imagePath, threshold);
 //   return buffer.toString("base64");
 // };
-
 const USBPrinter = {
   init: (): Promise<void> =>
     new Promise((resolve, reject) =>
@@ -130,12 +105,7 @@ const USBPrinter = {
 
   connectPrinter: (vendorId: string, productId: string): Promise<IUSBPrinter> =>
     new Promise((resolve, reject) =>
-      RNUSBPrinter.connectPrinter(
-        vendorId,
-        productId,
-        (printer: IUSBPrinter) => resolve(printer),
-        (error: Error) => reject(error)
-      )
+      RNUSBPrinter.connectPrinter(vendorId, productId, resolve, reject)
     ),
 
   closeConn: (): Promise<void> =>
@@ -144,14 +114,16 @@ const USBPrinter = {
       resolve();
     }),
 
-  printText: (text: string, opts: PrinterOptions = {}): void =>
-    RNUSBPrinter.printRawData(textTo64Buffer(text, opts), (error: Error) =>
-      console.warn(error)
+  printText: async (text: string, opts: PrinterOptions = {}): Promise<void> =>
+    RNUSBPrinter.printRawData(
+      await textTo64Buffer(text, opts),
+      (error: Error) => console.warn(error)
     ),
 
-  printBill: (text: string, opts: PrinterOptions = {}): void =>
-    RNUSBPrinter.printRawData(billTo64Buffer(text, opts), (error: Error) =>
-      console.warn(error)
+  printBill: async (text: string, opts: PrinterOptions = {}): Promise<void> =>
+    RNUSBPrinter.printRawData(
+      await billTo64Buffer(text, opts),
+      (error: Error) => console.warn(error)
     ),
   /**
    * image url
@@ -177,19 +149,26 @@ const USBPrinter = {
    * @param Base64
    * @param opts
    */
-  printImageBase64: function (Base64: string, opts: PrinterImageOptions = {}) {
-    if (Platform.OS === "ios") {
-      RNUSBPrinter.printImageBase64(Base64, opts, (error: Error) =>
-        console.warn(error)
-      );
-    } else {
-      RNUSBPrinter.printImageBase64(
-        Base64,
-        opts?.imageWidth ?? 0,
-        opts?.imageHeight ?? 0,
-        (error: Error) => console.warn(error)
-      );
-    }
+  printImageBase64: function (
+    Base64: string,
+    opts: PrinterImageOptions = {}
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        return RNUSBPrinter.printImageBase64(Base64, opts, reject)
+          .then(resolve)
+          .catch(reject);
+      } else {
+        return RNUSBPrinter.printImageBase64(
+          Base64,
+          opts?.imageWidth ?? 0,
+          opts?.imageHeight ?? 0,
+          reject
+        )
+          .then(resolve)
+          .catch(reject);
+      }
+    });
   },
   /**
    * android print with encoder
@@ -206,21 +185,22 @@ const USBPrinter = {
    * 80mm => 46 character
    * 58mm => 30 character
    */
-  printColumnsText: (
+  printColumnsText: async (
     texts: string[],
     columnWidth: number[],
     columnAlignment: ColumnAlignment[],
     columnStyle: string[],
     opts: PrinterOptions = {}
-  ): void => {
+  ): Promise<void> => {
     const result = processColumnText(
       texts,
       columnWidth,
       columnAlignment,
       columnStyle
     );
-    RNUSBPrinter.printRawData(textTo64Buffer(result, opts), (error: Error) =>
-      console.warn(error)
+    RNUSBPrinter.printRawData(
+      await textTo64Buffer(result, opts),
+      (error: Error) => console.warn(error)
     );
   },
 };
@@ -257,7 +237,7 @@ const BLEPrinter = {
       resolve();
     }),
 
-  printText: (text: string, opts: PrinterOptions = {}): void => {
+  printText: async (text: string, opts: PrinterOptions = {}): Promise<void> => {
     if (Platform.OS === "ios") {
       const processedText = textPreprocessingIOS(text, false, false);
       RNBLEPrinter.printRawData(
@@ -266,30 +246,38 @@ const BLEPrinter = {
         (error: Error) => console.warn(error)
       );
     } else {
-      RNBLEPrinter.printRawData(textTo64Buffer(text, opts), (error: Error) =>
-        console.warn(error)
+      RNBLEPrinter.printRawData(
+        await textTo64Buffer(text, opts),
+        (error: Error) => console.warn(error)
       );
     }
   },
 
-  printBill: (text: string, opts: PrinterOptions = {}): void => {
-    if (Platform.OS === "ios") {
-      const processedText = textPreprocessingIOS(
-        text,
-        opts?.cut ?? true,
-        opts.beep ?? true
-      );
-      RNBLEPrinter.printRawData(
-        processedText.text,
-        processedText.opts,
-        (error: Error) => console.warn(error)
-      );
-    } else {
-      RNBLEPrinter.printRawData(billTo64Buffer(text, opts), (error: Error) =>
-        console.warn(error)
-      );
-    }
-  },
+  printBill: async (text: string, opts: PrinterOptions = {}): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        const processedText = textPreprocessingIOS(
+          text,
+          opts?.cut ?? true,
+          opts.beep ?? true
+        );
+        RNBLEPrinter.printRawData(
+          processedText.text,
+          processedText.opts,
+          reject
+        )
+          .then(resolve)
+          .catch(reject);
+      } else {
+        billTo64Buffer(text, opts)
+          .then((parsedText) => {
+            RNBLEPrinter.printRawData(parsedText, reject)
+              .then(resolve)
+              .catch(reject);
+          })
+          .catch(reject);
+      }
+    }),
   /**
    * image url
    * @param imgUrl
@@ -317,19 +305,22 @@ const BLEPrinter = {
    * @param Base64
    * @param opts
    */
-  printImageBase64: function (Base64: string, opts: PrinterImageOptions = {}) {
+  printImageBase64: function (
+    Base64: string,
+    opts: PrinterImageOptions = {}
+  ): Promise<void> {
     if (Platform.OS === "ios") {
       /**
        * just development
        */
-      RNBLEPrinter.printImageBase64(Base64, opts, (error: Error) =>
+      return RNBLEPrinter.printImageBase64(Base64, opts, (error: Error) =>
         console.warn(error)
       );
     } else {
       /**
        * just development
        */
-      RNBLEPrinter.printImageBase64(
+      return RNBLEPrinter.printImageBase64(
         Base64,
         opts?.imageWidth ?? 0,
         opts?.imageHeight ?? 0,
@@ -352,13 +343,13 @@ const BLEPrinter = {
    * 80mm => 46 character
    * 58mm => 30 character
    */
-  printColumnsText: (
+  printColumnsText: async (
     texts: string[],
     columnWidth: number[],
     columnAlignment: ColumnAlignment[],
     columnStyle: string[],
     opts: PrinterOptions = {}
-  ): void => {
+  ): Promise<void> => {
     const result = processColumnText(
       texts,
       columnWidth,
@@ -373,8 +364,9 @@ const BLEPrinter = {
         (error: Error) => console.warn(error)
       );
     } else {
-      RNBLEPrinter.printRawData(textTo64Buffer(result, opts), (error: Error) =>
-        console.warn(error)
+      RNBLEPrinter.printRawData(
+        await textTo64Buffer(result, opts),
+        (error: Error) => console.warn(error)
       );
     }
   },
@@ -396,7 +388,7 @@ const NetPrinter = {
         (error: Error) => reject(error)
       )
     ),
-
+  // TODO cjeck
   connectPrinter: (
     host: string,
     port: number,
@@ -405,24 +397,15 @@ const NetPrinter = {
     new Promise(async (resolve, reject) => {
       try {
         await connectToHost(host, timeout);
-        RNNetPrinter.connectPrinter(
-          host,
-          port,
-          (printer: INetPrinter) => resolve(printer),
-          (error: Error) => reject(error)
-        );
+        RNNetPrinter.connectPrinter(host, port, resolve, reject);
       } catch (error) {
         reject(error?.message || `Connect to ${host} fail`);
       }
     }),
 
-  closeConn: (): Promise<void> =>
-    new Promise((resolve) => {
-      RNNetPrinter.closeConn();
-      resolve();
-    }),
+  closeConn: (): Promise<void> => RNNetPrinter.closeConn(),
 
-  printText: (text: string, opts = {}): void => {
+  printText: async (text: string, opts = {}): Promise<void> => {
     if (Platform.OS === "ios") {
       const processedText = textPreprocessingIOS(text, false, false);
       RNNetPrinter.printRawData(
@@ -431,30 +414,38 @@ const NetPrinter = {
         (error: Error) => console.warn(error)
       );
     } else {
-      RNNetPrinter.printRawData(textTo64Buffer(text, opts), (error: Error) =>
-        console.warn(error)
+      RNNetPrinter.printRawData(
+        await textTo64Buffer(text, opts),
+        (error: Error) => console.warn(error)
       );
     }
   },
 
-  printBill: (text: string, opts: PrinterOptions = {}): void => {
-    if (Platform.OS === "ios") {
-      const processedText = textPreprocessingIOS(
-        text,
-        opts?.cut ?? true,
-        opts.beep ?? true
-      );
-      RNNetPrinter.printRawData(
-        processedText.text,
-        processedText.opts,
-        (error: Error) => console.warn(error)
-      );
-    } else {
-      RNNetPrinter.printRawData(billTo64Buffer(text, opts), (error: Error) =>
-        console.warn(error)
-      );
-    }
-  },
+  printBill: async (text: string, opts: PrinterOptions = {}): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        const processedText = textPreprocessingIOS(
+          text,
+          opts.cut ?? true,
+          opts.beep ?? true
+        );
+        RNNetPrinter.printRawData(
+          processedText.text,
+          processedText.opts,
+          reject
+        )
+          .then(resolve)
+          .catch(reject);
+      } else {
+        billTo64Buffer(text, opts)
+          .then((parsedText) => {
+            RNBLEPrinter.printRawData(parsedText, reject)
+              .then(resolve)
+              .catch(reject);
+          })
+          .catch(reject);
+      }
+    }),
   /**
    * image url
    * @param imgUrl
@@ -479,19 +470,26 @@ const NetPrinter = {
    * @param Base64
    * @param opts
    */
-  printImageBase64: function (Base64: string, opts: PrinterImageOptions = {}) {
-    if (Platform.OS === "ios") {
-      RNNetPrinter.printImageBase64(Base64, opts, (error: Error) =>
-        console.warn(error)
-      );
-    } else {
-      RNNetPrinter.printImageBase64(
-        Base64,
-        opts?.imageWidth ?? 0,
-        opts?.imageHeight ?? 0,
-        (error: Error) => console.warn(error)
-      );
-    }
+  printImageBase64: function (
+    Base64: string,
+    opts: PrinterImageOptions = {}
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        return RNNetPrinter.printImageBase64(Base64, opts, reject)
+          .then(resolve)
+          .catch(reject);
+      } else {
+        return RNNetPrinter.printImageBase64(
+          Base64,
+          opts?.imageWidth ?? 0,
+          opts?.imageHeight ?? 0,
+          reject
+        )
+          .then(resolve)
+          .catch(reject);
+      }
+    });
   },
 
   /**
@@ -510,13 +508,13 @@ const NetPrinter = {
    * 80mm => 46 character
    * 58mm => 30 character
    */
-  printColumnsText: (
+  printColumnsText: async (
     texts: string[],
     columnWidth: number[],
     columnAlignment: ColumnAlignment[],
     columnStyle: string[] = [],
     opts: PrinterOptions = {}
-  ): void => {
+  ): Promise<void> => {
     const result = processColumnText(
       texts,
       columnWidth,
@@ -531,8 +529,8 @@ const NetPrinter = {
         (error: Error) => console.warn(error)
       );
     } else {
-      RNNetPrinter.printRawData(textTo64Buffer(result, opts), (error: Error) =>
-        console.warn(error)
+      textTo64Buffer(result, opts).then((t) =>
+        RNNetPrinter.printRawData(t, (error: Error) => console.warn(error))
       );
     }
   },

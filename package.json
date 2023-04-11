@@ -56,7 +56,8 @@
     "typescript": "^4.0.2"
   },
   "peerDependencies": {
-    "react-native-ping": "*"
+    "react-native-ping": "*",
+    "react-native": "*"
   },
   "author": "thiendangit",
   "homepage": "https://github.com/thiendangit/react-native-thermal-receipt-printer-image-qr#readme",
