@@ -174,12 +174,14 @@ const USBPrinter = {
    * android print with encoder
    * @param text
    */
-  printRaw: (text: string): void => {
-    if (Platform.OS === "ios") {
-    } else {
-      RNUSBPrinter.printRawData(text, (error: Error) => console.warn(error));
-    }
-  },
+  printRaw: (text: string): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        resolve();
+      } else {
+        RNUSBPrinter.printRawData(text, reject).then(resolve).catch(reject);
+      }
+    }),
   /**
    * `columnWidth`
    * 80mm => 46 character
@@ -309,35 +311,42 @@ const BLEPrinter = {
     Base64: string,
     opts: PrinterImageOptions = {}
   ): Promise<void> {
-    if (Platform.OS === "ios") {
-      /**
-       * just development
-       */
-      return RNBLEPrinter.printImageBase64(Base64, opts, (error: Error) =>
-        console.warn(error)
-      );
-    } else {
-      /**
-       * just development
-       */
-      return RNBLEPrinter.printImageBase64(
-        Base64,
-        opts?.imageWidth ?? 0,
-        opts?.imageHeight ?? 0,
-        (error: Error) => console.warn(error)
-      );
-    }
+    return new Promise((resolve, reject) => {
+      //
+      if (Platform.OS === "ios") {
+        /**
+         * just development
+         */
+        RNBLEPrinter.printImageBase64(Base64, opts, reject)
+          .then(resolve)
+          .catch(reject);
+      } else {
+        /**
+         * just development
+         */
+        return RNBLEPrinter.printImageBase64(
+          Base64,
+          opts?.imageWidth ?? 0,
+          opts?.imageHeight ?? 0,
+          reject
+        )
+          .then(resolve)
+          .catch(reject);
+      }
+    });
   },
   /**
    * android print with encoder
    * @param text
    */
-  printRaw: (text: string): void => {
-    if (Platform.OS === "ios") {
-    } else {
-      RNBLEPrinter.printRawData(text, (error: Error) => console.warn(error));
-    }
-  },
+  printRaw: (text: string): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        resolve();
+      } else {
+        RNBLEPrinter.printRawData(text, reject).then(resolve).catch(reject);
+      }
+    }),
   /**
    * `columnWidth`
    * 80mm => 46 character
@@ -496,12 +505,14 @@ const NetPrinter = {
    * Android print with encoder
    * @param text
    */
-  printRaw: (text: string): void => {
-    if (Platform.OS === "ios") {
-    } else {
-      RNNetPrinter.printRawData(text, (error: Error) => console.warn(error));
-    }
-  },
+  printRaw: (text: string): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (Platform.OS === "ios") {
+        resolve();
+      } else {
+        RNNetPrinter.printRawData(text, reject).then(resolve).catch(reject);
+      }
+    }),
 
   /**
    * `columnWidth`
